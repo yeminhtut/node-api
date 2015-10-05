@@ -5,6 +5,8 @@ var morgan = require('morgan');
 var mongoose = require('mongoose');
 var port = process.env.PORT || 8080; // set the port for our app
 var User = require('./app/models/user');
+var jwt = require('jsonwebtoken');
+var superSecret = 'iamsuperscret';
 
 // APP CONFIGURATION ---------------------
 // use body parser so we can grab information from POST requests
@@ -23,21 +25,70 @@ app.use(morgan('dev'));
 
 // connect to our database (hosted on modulus.io)
 	mongoose.connect('mongodb://yemin:yemin123@apollo.modulusmongo.net:27017/toBa8nuq');
-
-
+	
 	app.get('/',function(req,res){
 		res.send("Welcome to the home page");
 	});
 
 	var apiRouter = express.Router();
+
+	apiRouter.post('/authenticate',function(req,res){
+		User.findOne({username:req.body.username}).select('name username password').exec(function(err,user){
+			if(err) throw err;
+			if(!user){
+				res.json({success:false,message:"Authentication failed, user not found"});
+			}
+			else if(user){
+				var validPassword = user.comparePassword(req.body.password);
+				if(!validPassword){
+					res.json({success:false,message:"Authentication failed, invalid password"});
+				}
+				else{
+					// create a token
+					var token = jwt.sign(
+										{name: user.name,username: user.username},
+										superSecret, 
+										{expiresIn: "10h" });
+					res.json({success:true,message:'Enjoy your token',token:token});
+				}				
+			}			
+		})
+	})
 	//middleware
 	apiRouter.use(function(req,res,next){
+		var token = req.body.token || req.param('token') || req.headers['x-access-token'];
+		if(token){
+			jwt.verify(token,superSecret,function(err,decoded){
+				if(err){
+					return res.status(403).send({
+						success:false,
+						message:'failed to authenticate token'
+					});
+				}
+				else{
+					// if everything is good, save to request for use in other routes
+					req.decoded = decoded;
+					next();
+				}
+			});
+		}
+		else {	
+			// if there is no token
+			// return an HTTP response of 403 (access forbidden) and an error message
+			return res.status(403).send({
+				success: false,
+				message: 'No token provided.'
+			});
+		}
 		console.log('somebody come to our app');
-		next();
 	});
 
 	apiRouter.get('/',function(req,res){
 		res.json({message:'Welcome to our api'});
+	});
+
+	apiRouter.get('/me',function(req,res){
+		res.send(req.decoded);
 	});
 
 	apiRouter.route('/user')
@@ -53,7 +104,7 @@ app.use(morgan('dev'));
 				if (err) {
 				// duplicate entry
 				if (err.code == 11000)
-					return res.json({ success: false, message: 'A user with thatusername already exists. '});
+					return res.json({ success: false, message: 'A user with that username already exists. '});
 				else
 					return res.send(err);
 				}
